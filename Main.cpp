@@ -26,7 +26,7 @@ constexpr int ENEMY_DAMAGE = 20;
 constexpr int MY_HP = 1000;
 constexpr double pi = 3.141592;
 constexpr int TITLE_SIZE = 32; //メニューテキストの縦の長さ
-constexpr int MENU_NUM = 2;
+constexpr int MENU_NUM = 3;
 
 struct P_bullet {
   bool flag;
@@ -34,7 +34,7 @@ struct P_bullet {
   int angle; //度数法
   P_bullet() {
 	flag = false;
-	angle = 45;
+	angle = 60;
 	for (int i = 0; i < 3; i++) {
 	  x[i] = INVALID_NUM;
 	  y[i] = INVALID_NUM;
@@ -91,22 +91,28 @@ void Main() {
   Texture background(U"img/background.png");
   int scrollVal = FIELD_Y - 2160;//背景のスクロール値
   int count = 0;//今何フレーム目か
-  int gameType = 0;//0 -> ゲーム選択画面
-  std::array<std::u32string, MENU_NUM> menuTexts = { U"ステージ1", U"対戦プレイ" };
+  int gameType = -1;//0 -> ゲーム選択画面
+  std::array<std::u32string, MENU_NUM> menuTexts = { U"ステージ1", U"対戦プレイ", U"コンフィグ" };
+  int selectIndex = 0;
 
   while (System::Update()) {//メインループ
 
 	count++;
 
-	if (gameType == 0) {
-	  for (int i = 1; i <= menuTexts.size(); i++) {
-		int y = i * TITLE_SIZE + 300;
-		title(menuTexts[i - 1]).drawAt(WINDOW_X / 2, y);
+	if (gameType == -1) {
+	  Rect(WINDOW_X / 2 - 100, (WINDOW_Y - MENU_NUM * TITLE_SIZE) / 2 + selectIndex * TITLE_SIZE, 200, TITLE_SIZE).draw(Palette::White);
+	  for (int i = 0; i < menuTexts.size(); i++) {
+		int y = i * TITLE_SIZE + (WINDOW_Y - MENU_NUM * TITLE_SIZE) / 2 + TITLE_SIZE / 2;
+		title(menuTexts[i]).drawAt(WINDOW_X / 2, y, Palette::Palevioletred);
 	  }
-	}
+	  if (KeyDown.down())selectIndex++;
+	  if (KeyUp.down())selectIndex--;
+	  if (selectIndex == -1)selectIndex = MENU_NUM - 1;
+	  if (selectIndex == MENU_NUM)selectIndex = 0;
+	  if (KeyEnter.down())gameType = selectIndex;
+	}//メニュー画面の実装
 
-	if (gameType == 1) {
-
+	if (gameType == 0) {
 	  {
 		background.draw(0, scrollVal);
 		scrollVal++;
@@ -214,6 +220,11 @@ void Main() {
 	  if (player.hp <= 0)break;//HPが0になったら終了
 
 	}//end of if.
+
+	if (0 <= gameType) {
+	  auto back = title(U"戻る");
+	  back.draw(WINDOW_X - back.region().x, WINDOW_Y - back.region().y, Palette::Palevioletred);
+	}
 
   }//end of main loop.
 
