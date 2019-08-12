@@ -1,4 +1,5 @@
 ﻿#include <Siv3D.hpp> // OpenSiv3D v0.3.2
+#include <HamFramework.hpp>
 #include <string>
 #include <random>
 #include <array>
@@ -18,7 +19,7 @@ constexpr int P_BULLET_NUM = 8;
 constexpr int INVALID_NUM = -1;
 constexpr int P_BULLET_SIZE = 16;
 constexpr int P_BULLET_SPEED = 24;
-constexpr int ENEMY_NUM = 16;
+constexpr int ENEMY_NUM = 4;
 constexpr int E_PATTERN_NUM = 3;
 constexpr int ENEMY_SIZE = 32;
 constexpr int ENEMY_SPEED = 8;
@@ -27,6 +28,7 @@ constexpr int MY_HP = 1000;
 constexpr double pi = 3.141592;
 constexpr int TITLE_SIZE = 32; //メニューテキストの縦の長さ
 constexpr int MENU_NUM = 3;
+constexpr int SCROLL_SPEED = 8;
 
 struct P_bullet {
   bool flag;
@@ -48,14 +50,16 @@ struct Player {
   int hp;
   Texture img;
   Texture bullet_img;
-  P_bullet bullets[P_BULLET_NUM];//3方向に飛ばすので
-  Player(int x, int y, int hp, std::u32string img, std::u32string bullet_img) : x(x), y(y), hp(hp), img(img), bullet_img(bullet_img) {}
+  P_bullet bullets[P_BULLET_NUM];
+  bool isAwakening;
+  Player(int x, int y, int hp, std::u32string img, std::u32string bullet_img) : x(x), y(y), hp(hp), img(img), bullet_img(bullet_img), isAwakening(false) {}
 };
 
 struct Enemy {
   double x, y;
   int angle;//向かう方向の角度
   bool isalive;
+  bool istouched;
 };
 
 bool inField(int x, int y, int size) {//フィールド内にいるかどうかを返す関数
@@ -67,6 +71,7 @@ void enemyInitialize(Enemy & e, std::mt19937 & mt, std::uniform_int_distribution
   e.y = disty(mt);
   e.angle = distangle(mt);
   e.isalive = true;
+  e.istouched = false;
 }//敵インスタンスの初期化
 
 void Main() {
@@ -79,7 +84,7 @@ void Main() {
   Font title(TITLE_SIZE);//メニューテキスト用
   Player player((FIELD_X - OBJECT_WIDTH) / 2, FIELD_Y - OBJECT_HEIGHT, MY_HP, U"img/player.png", U"img/bullet.png");
   Enemy enemies[ENEMY_NUM];
-  /*敵の位置等の生成用の変数*/
+  //敵の位置等の生成用の変数
   std::mt19937 mt(std::random_device{}());
   std::uniform_int_distribution<int> distx(0, FIELD_X - ENEMY_SIZE);
   std::uniform_int_distribution<int> disty(0, (FIELD_Y - ENEMY_SIZE) / 2);
@@ -87,13 +92,17 @@ void Main() {
   for (Enemy& e : enemies) {
 	enemyInitialize(e, mt, distx, disty, distangle);
   }//敵のインスタンスをそれぞれ初期化
-
   Texture background(U"img/background.png");
   int scrollVal = FIELD_Y - 2160;//背景のスクロール値
   int count = 0;//今何フレーム目か
   int gameType = -1;//0 -> ゲーム選択画面
   std::array<std::u32string, MENU_NUM> menuTexts = { U"ステージ1", U"対戦プレイ", U"コンフィグ" };
   int selectIndex = 0;
+  std::pair<double, double> afterimage[10];
+  for (auto& a : afterimage) {
+	a.first = INVALID_NUM;
+	a.second = INVALID_NUM;
+  }
 
   while (System::Update()) {//メインループ
 
@@ -115,9 +124,22 @@ void Main() {
 	if (gameType == 0) {
 	  {
 		background.draw(0, scrollVal);
-		scrollVal++;
-		if (scrollVal == 0)scrollVal = FIELD_Y - 2160;
+		scrollVal += SCROLL_SPEED;
+		if (scrollVal >= 0)scrollVal = FIELD_Y - 2160;
 	  }//背景の描画と移動
+
+	  if (player.isAwakening) {
+		if (count % 4 == 0) {
+		  for (int i = 0; i < 9; i++) {
+			afterimage[i + 1] = afterimage[i];
+		  }//それぞれの値を一つずつずらす
+		  afterimage[0] = std::make_pair(player.x, player.y);
+		}
+		for (int i = 0; i < 10; i++) {
+		  player.img.draw(afterimage[i].first, afterimage[i].second, Color(0, 255, 255));
+		}
+		//残像の描画
+	  }//自機の残像の描画(自機が覚醒したら残像を描画する)
 
 	  {
 		player.img.draw(player.x, player.y);//Draw player.
@@ -198,6 +220,7 @@ void Main() {
 			if (isTouched)player.hp -= ENEMY_DAMAGE;
 			font(player.hp).draw();
 			enemyRect.draw(isTouched ? Palette::Red : Palette::White);
+			Rect(e.x, e.y, ENEMY_SIZE, ENEMY_SIZE).draw(e.istouched ? Palette::Red : Palette::White);
 			double moveY = sin(radian(e.angle)) * ENEMY_SPEED;
 			double moveX = cos(radian(e.angle)) * ENEMY_SPEED;
 			e.x -= moveX;
@@ -210,6 +233,33 @@ void Main() {
 		  if (!enemies[tmpIndex].isalive)enemyInitialize(enemies[tmpIndex], mt, distx, disty, distangle);
 		}
 	  }//敵の処理と当たり判定
+
+	  {
+		for (const auto& b : player.bullets) {
+		  for (auto& e : enemies) {
+			bool flag = false;
+			for (int i = 0; i < 3; i++) {
+			  if (Rect(b.x[i], b.y[i], P_BULLET_SIZE, P_BULLET_SIZE).intersects(Rect(e.x, e.y, ENEMY_SIZE, ENEMY_SIZE))) {
+				flag = true;
+			  }
+			}
+			if (flag)e.istouched = true;
+			else e.istouched = false;
+		  }
+		}
+		for (auto& e : enemies) {//各敵を全探索
+		  bool flag = false;
+		  for (const auto& b : player.bullets) {
+			for (int i = 0; i < 3; i++) {
+			  if (Rect(b.x[i], b.y[i], P_BULLET_SIZE, P_BULLET_SIZE).intersects(Rect(e.x, e.y, ENEMY_SIZE, ENEMY_SIZE))) {
+				flag = true;
+			  }
+			}
+		  }
+		  if (flag)e.istouched = true;
+		  else e.istouched = false;
+		}
+	  }//自機の弾と敵の当たり判定
 
 	  {
 		Rect(FIELD_X, 0, WINDOW_X, 80).draw(Palette::White);
