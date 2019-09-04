@@ -3,279 +3,220 @@
 #include <string>
 #include <random>
 #include <array>
+#include <vector>
 #include <cmath>
-#define debug(var) std::cout << #var << " : " << var << std::endl;
-#define radian(angle) angle * (pi) / 180
+#include <thread>
+#include <string_view>
+#include <memory>
+#include "Header.hpp"
+#include "gameconnect.hpp"
 
-//定数宣言
-constexpr int WINDOW_X = 1280;
-constexpr int WINDOW_Y = 720;
-constexpr int FIELD_X = 960;
-constexpr int FIELD_Y = 720;
-constexpr int OBJECT_WIDTH = 64;
-constexpr int OBJECT_HEIGHT = 64;
-constexpr int SPEED = 12;
-constexpr int P_BULLET_NUM = 8;
-constexpr int INVALID_NUM = -1;
-constexpr int P_BULLET_SIZE = 16;
-constexpr int P_BULLET_SPEED = 24;
-constexpr int ENEMY_NUM = 4;
-constexpr int E_PATTERN_NUM = 3;
-constexpr int ENEMY_SIZE = 32;
-constexpr int ENEMY_SPEED = 8;
-constexpr int ENEMY_DAMAGE = 20;
-constexpr int MY_HP = 1000;
-constexpr double pi = 3.141592;
-constexpr int TITLE_SIZE = 32; //メニューテキストの縦の長さ
-constexpr int MENU_NUM = 3;
-constexpr int SCROLL_SPEED = 8;
+#define radian(angle) (angle) * (pi) / 180
+#define PAD_UP (Gamepad(0).isConnected() ? pad.povUp.pressed() : KeyUp.pressed())
+#define PAD_DOWN (Gamepad(0).isConnected() ? pad.povDown.pressed() : KeyDown.pressed())
+#define PAD_RIGHT (Gamepad(0).isConnected() ? pad.povRight.pressed() : KeyRight.pressed())
+#define PAD_LEFT (Gamepad(0).isConnected() ? pad.povLeft.pressed() : KeyLeft.pressed())
+#define PAD_ENTER (Gamepad(0).isConnected() ? pad.buttons[0].pressed() : KeyEnter.pressed())
 
-struct P_bullet {
-  bool flag;
-  double x[3], y[3];//[0] -> センター [1] -> 左 [2] -> 右
-  int angle; //度数法
-  P_bullet() {
-	flag = false;
-	angle = 60;
-	for (int i = 0; i < 3; i++) {
-	  x[i] = INVALID_NUM;
-	  y[i] = INVALID_NUM;
-	}
-  }
-};
-
-struct Player {
-  double x;
-  double y;
-  int hp;
-  Texture img;
-  Texture bullet_img;
-  P_bullet bullets[P_BULLET_NUM];
-  bool isAwakening;
-  Player(int x, int y, int hp, std::u32string img, std::u32string bullet_img) : x(x), y(y), hp(hp), img(img), bullet_img(bullet_img), isAwakening(false) {}
-};
-
-struct Enemy {
-  double x, y;
-  int angle;//向かう方向の角度
-  bool isalive;
-  bool istouched;
-};
-
-bool inField(int x, int y, int size) {//フィールド内にいるかどうかを返す関数
-  return (0 <= x && x + size <= FIELD_X && 0 <= y && y + size <= FIELD_Y);
+bool inField(int x, int y, int width, int height) {//フィールド内にいるかどうかを返す関数
+  return (0 <= x && x + width <= FIELD_X && 0 <= y && y + height <= FIELD_Y);
 }
 
-void enemyInitialize(Enemy & e, std::mt19937 & mt, std::uniform_int_distribution<int> & distx, std::uniform_int_distribution<int> & disty, std::uniform_int_distribution<int> & distangle) {
-  e.x = distx(mt);
-  e.y = disty(mt);
-  e.angle = distangle(mt);
-  e.isalive = true;
-  e.istouched = false;
-}//敵インスタンスの初期化
-
-void Main() {
-
-  //ゲーム関連の設定
+void Init() {//ウィンドウ関係の設定 
   Window::Resize(WINDOW_X, WINDOW_Y);
   Graphics::SetBackground(Palette::Skyblue);
   Window::SetTitle(U"THE SHOOT.ver=2");
-  Font font(20);//デバッグ用
-  Font title(TITLE_SIZE);//メニューテキスト用
-  Player player((FIELD_X - OBJECT_WIDTH) / 2, FIELD_Y - OBJECT_HEIGHT, MY_HP, U"img/player.png", U"img/bullet.png");
-  Enemy enemies[ENEMY_NUM];
-  //敵の位置等の生成用の変数
-  std::mt19937 mt(std::random_device{}());
-  std::uniform_int_distribution<int> distx(0, FIELD_X - ENEMY_SIZE);
-  std::uniform_int_distribution<int> disty(0, (FIELD_Y - ENEMY_SIZE) / 2);
-  std::uniform_int_distribution<int> distangle(0, 180);
-  for (Enemy& e : enemies) {
-	enemyInitialize(e, mt, distx, disty, distangle);
-  }//敵のインスタンスをそれぞれ初期化
-  Texture background(U"img/background.png");
-  int scrollVal = FIELD_Y - 2160;//背景のスクロール値
-  int count = 0;//今何フレーム目か
-  int gameType = -1;//0 -> ゲーム選択画面
-  std::array<std::u32string, MENU_NUM> menuTexts = { U"ステージ1", U"対戦プレイ", U"コンフィグ" };
-  int selectIndex = 0;
-  std::pair<double, double> afterimage[10];
-  for (auto& a : afterimage) {
-	a.first = INVALID_NUM;
-	a.second = INVALID_NUM;
-  }
+  Console.open();
+}
 
-  while (System::Update()) {//メインループ
+void Stage1::update(std::unique_ptr<Stage> & ptr) {
 
+  try {
+
+	if (Gamepad(0).isConnected()) {
+	  pad = Gamepad(0);//パッド情報を毎回更新する
+	}
 	count++;
+	{
+	  background.draw(0, scrollVal);
+	  scrollVal += SCROLL_SPEED;
+	  if (scrollVal >= 0)scrollVal = FIELD_Y - 2160;
+	}//背景の描画と移動
 
-	if (gameType == -1) {
-	  Rect(WINDOW_X / 2 - 100, (WINDOW_Y - MENU_NUM * TITLE_SIZE) / 2 + selectIndex * TITLE_SIZE, 200, TITLE_SIZE).draw(Palette::White);
-	  for (int i = 0; i < menuTexts.size(); i++) {
-		int y = i * TITLE_SIZE + (WINDOW_Y - MENU_NUM * TITLE_SIZE) / 2 + TITLE_SIZE / 2;
-		title(menuTexts[i]).drawAt(WINDOW_X / 2, y, Palette::Palevioletred);
+	if (player.isAwakening) {
+	  if (count % 4 == 0) {
+		for (int i = 0; i < 9; i++) {
+		  afterimages[i + 1] = afterimages[i];
+		}//それぞれの値を一つずつずらす
+		afterimages[0] = std::make_pair(player.x, player.y);
 	  }
-	  if (KeyDown.down())selectIndex++;
-	  if (KeyUp.down())selectIndex--;
-	  if (selectIndex == -1)selectIndex = MENU_NUM - 1;
-	  if (selectIndex == MENU_NUM)selectIndex = 0;
-	  if (KeyEnter.down())gameType = selectIndex;
-	}//メニュー画面の実装
+	  for (int i = 0; i < 10; i++) {
+		player.img.draw(afterimages[i].first, afterimages[i].second, Color(0, 255, 255));
+	  }
+	  //残像の描画
+	}//自機の残像の描画(自機が覚醒したら残像を描画する)
 
-	if (gameType == 0) {
-	  {
-		background.draw(0, scrollVal);
-		scrollVal += SCROLL_SPEED;
-		if (scrollVal >= 0)scrollVal = FIELD_Y - 2160;
-	  }//背景の描画と移動
+	{
+	  player.img.draw(player.x, player.y);//Draw player.
 
-	  if (player.isAwakening) {
-		if (count % 4 == 0) {
-		  for (int i = 0; i < 9; i++) {
-			afterimage[i + 1] = afterimage[i];
-		  }//それぞれの値を一つずつずらす
-		  afterimage[0] = std::make_pair(player.x, player.y);
-		}
-		for (int i = 0; i < 10; i++) {
-		  player.img.draw(afterimage[i].first, afterimage[i].second, Color(0, 255, 255));
-		}
-		//残像の描画
-	  }//自機の残像の描画(自機が覚醒したら残像を描画する)
+	  if (PAD_RIGHT) {
+		player.x += SPEED;
+	  }
+	  else if (PAD_LEFT) {
+		player.x -= SPEED;
+	  }
+	  else if (PAD_UP) {
+		player.y -= SPEED;
+	  }
+	  else if (PAD_DOWN) {
+		player.y += SPEED;
+	  }
+	  if (KeyEscape.down()) {
+		return;
+	  }
+	  if (player.x < 0)player.x = 0;
+	  else if (player.x > FIELD_X - OBJECT_WIDTH)player.x = FIELD_X - OBJECT_WIDTH;
+	  else if (player.y < 0)player.y = 0;
+	  else if (player.y > FIELD_Y - OBJECT_HEIGHT)player.y = FIELD_Y - OBJECT_HEIGHT;
 
-	  {
-		player.img.draw(player.x, player.y);//Draw player.
+	}//自機の描画と移動
 
-		if (KeyRight.pressed()) {
-		  player.x += SPEED;
-		}
-		else if (KeyLeft.pressed()) {
-		  player.x -= SPEED;
-		}
-		else if (KeyUp.pressed()) {
-		  player.y -= SPEED;
-		}
-		else if (KeyDown.pressed()) {
-		  player.y += SPEED;
-		}
-		if (KeyEscape.down()) {
-		  break;
-		}
-		if (player.x < 0)player.x = 0;
-		else if (player.x > FIELD_X - OBJECT_WIDTH)player.x = FIELD_X - OBJECT_WIDTH;
-		else if (player.y < 0)player.y = 0;
-		else if (player.y > FIELD_Y - OBJECT_HEIGHT)player.y = FIELD_Y - OBJECT_HEIGHT;
+	{
 
-	  }//自機の描画と移動
+	  if (PAD_ENTER && count % 6 == 0) {
+		for (P_bullet& bullet : player.bullets) {
+		  if (!bullet.flag[0] && !bullet.flag[1] && !bullet.flag[2]) {
+			for (int i = 0; i < 3; i++) {
+			  bullet.flag[i] = true;
+			  bullet.x[i] = player.x + (OBJECT_WIDTH - P_BULLET_SIZE) / 2;
+			  bullet.y[i] = player.y - P_BULLET_SIZE;
+			}
+			break;
+		  }
+		}
+	  }
 
-	  {
-
-		if (KeySpace.pressed() && count % 6 == 0) {
-		  for (P_bullet& bullet : player.bullets) {
-			if (bullet.flag == false) {
-			  bullet.flag = true;
-			  for (int i = 0; i < 3; i++) {
-				bullet.x[i] = player.x + (OBJECT_WIDTH - P_BULLET_SIZE) / 2;
-				bullet.y[i] = player.y - P_BULLET_SIZE;
+	  for (P_bullet& bullet : player.bullets) {
+		for (int i = 0; i < 3; i++) {
+		  if (bullet.flag[i]) {
+			player.bullet_img.draw(bullet.x[i], bullet.y[i]);
+			switch (i) {
+			case 0:
+			  bullet.y[i] -= P_BULLET_SPEED;
+			  break;
+			case 1:
+			case 2:
+			  double moveY = sin(radian(bullet.angle)) * P_BULLET_SPEED;
+			  double moveX = cos(radian(bullet.angle)) * P_BULLET_SPEED;
+			  if (i == 1) {
+				bullet.x[i] -= moveX;
+				bullet.y[i] -= moveY;
+			  }
+			  if (i == 2) {
+				bullet.x[i] += moveX;
+				bullet.y[i] -= moveY;
 			  }
 			  break;
 			}
-		  }
-		}
-
-		for (P_bullet& bullet : player.bullets) {
-		  if (bullet.flag) {
-			for (int i = 0; i < 3; i++) {
-			  player.bullet_img.draw(bullet.x[i], bullet.y[i]);
-			  switch (i) {
-			  case 0:
-				bullet.y[i] -= P_BULLET_SPEED;
-				break;
-			  case 1:
-			  case 2:
-				double moveY = sin(radian(bullet.angle)) * P_BULLET_SPEED;
-				double moveX = cos(radian(bullet.angle)) * P_BULLET_SPEED;
-				if (i == 1) {
-				  bullet.x[i] -= moveX;
-				  bullet.y[i] -= moveY;
-				}
-				if (i == 2) {
-				  bullet.x[i] += moveX;
-				  bullet.y[i] -= moveY;
-				}
-				break;
-			  }
-			  if (!inField(bullet.x[i], bullet.y[i], P_BULLET_SIZE)) {
-				bullet.flag = false;
-			  }
+			if (!inField(bullet.x[i], bullet.y[i], P_BULLET_SIZE, P_BULLET_SIZE)) {
+			  bullet.flag[i] = false;
 			}
 		  }
 		}
+	  }
 
-	  }//自機の弾の処理
+	}//自機の弾の処理
 
-	  {
-		for (Enemy& e : enemies) {
-		  if (e.isalive == true) {
-			const auto enemyRect = Rect(e.x, e.y, ENEMY_SIZE, ENEMY_SIZE);
-			const bool isTouched = enemyRect.intersects(player.img.region().movedBy(player.x, player.y));
-			if (isTouched)player.hp -= ENEMY_DAMAGE;
-			font(player.hp).draw();
-			enemyRect.draw(isTouched ? Palette::Red : Palette::White);
-			Rect(e.x, e.y, ENEMY_SIZE, ENEMY_SIZE).draw(e.istouched ? Palette::Red : Palette::White);
-			double moveY = sin(radian(e.angle)) * ENEMY_SPEED;
-			double moveX = cos(radian(e.angle)) * ENEMY_SPEED;
-			e.x -= moveX;
-			e.y += moveY;
+
+	{
+	  for (Enemy& e : enemies) {
+		if (e.isalive) {
+		  if (e.istouched)e.hp -= P_ATTACK_DAMAGE;
+		  if (e.y + ENEMY_HEIGHT >= FIELD_Y) {
+			player.hp -= ENEMY_DAMAGE;
+			Rect(0, FIELD_Y - 10, FIELD_X, 10).draw(Palette::Red);
 		  }
-		  if (!inField(e.x, e.y, ENEMY_SIZE))e.isalive = false;
+		  if (e.hp <= 0)e.isalive = false;
+		  Rect(e.x, e.y - 20, (ENEMY_WIDTH * e.hp / ENEMY_HP), 20).draw(Palette::Lightgreen);
+		  const auto enemyRect = Rect(e.x, e.y, ENEMY_WIDTH, ENEMY_HEIGHT);
+		  const bool isTouched = enemyRect.intersects(player.img.region().movedBy(player.x, player.y));
+		  if (e.istouched)attacked_enemy_img.rotatedAt(ENEMY_WIDTH / 2, ENEMY_HEIGHT / 2, -radian(e.angle - 90)).draw(e.x, e.y);
+		  else enemy_img.rotatedAt(ENEMY_WIDTH / 2, ENEMY_HEIGHT / 2, -radian(e.angle - 90)).draw(e.x, e.y);
+		  double moveY = sin(radian(e.angle)) * ENEMY_SPEED;
+		  double moveX = cos(radian(e.angle)) * ENEMY_SPEED;
+		  e.x -= moveX;
+		  e.y += moveY;
 		}
-		if (count % 2 == 0) {//8フレームごとに敵を復活させる
-		  int tmpIndex = count % ENEMY_NUM;
-		  if (!enemies[tmpIndex].isalive)enemyInitialize(enemies[tmpIndex], mt, distx, disty, distangle);
-		}
-	  }//敵の処理と当たり判定
+		if (!inField(e.x, e.y, ENEMY_WIDTH, ENEMY_HEIGHT))e.isalive = false;
+	  }
 
-	  {
-		for (const auto& b : player.bullets) {
+	  if (count % 2 == 0) {//2フレームごとに敵を復活させる
+		int tmpIndex = count % ENEMY_NUM;
+		if (!enemies[tmpIndex].isalive)enemyInitialize(enemies[tmpIndex], mt, distx, distangle);
+	  }
+	}//敵の処理
+
+	{
+	  for (auto& b : player.bullets) {
+		for (int i = 0; i < 3; i++) {
 		  for (auto& e : enemies) {
-			bool flag = false;
-			for (int i = 0; i < 3; i++) {
-			  if (Rect(b.x[i], b.y[i], P_BULLET_SIZE, P_BULLET_SIZE).intersects(Rect(e.x, e.y, ENEMY_SIZE, ENEMY_SIZE))) {
-				flag = true;
-			  }
-			}
-			if (flag)e.istouched = true;
-			else e.istouched = false;
+			if (e.isalive && Rect(b.x[i], b.y[i], P_BULLET_SIZE, P_BULLET_SIZE).intersects(Rect(e.x, e.y, ENEMY_WIDTH, ENEMY_HEIGHT)))e.istouched = true;
 		  }
 		}
-		for (auto& e : enemies) {//各敵を全探索
-		  bool flag = false;
-		  for (const auto& b : player.bullets) {
-			for (int i = 0; i < 3; i++) {
-			  if (Rect(b.x[i], b.y[i], P_BULLET_SIZE, P_BULLET_SIZE).intersects(Rect(e.x, e.y, ENEMY_SIZE, ENEMY_SIZE))) {
-				flag = true;
-			  }
-			}
+	  }
+	  for (auto& e : enemies) {
+		bool flag = false;
+		for (auto& b : player.bullets) {
+		  for (int i = 0; i < 3; i++) {
+			if (e.isalive && Rect(b.x[i], b.y[i], P_BULLET_SIZE, P_BULLET_SIZE).intersects(Rect(e.x, e.y, ENEMY_WIDTH, ENEMY_HEIGHT)))flag = true;
 		  }
-		  if (flag)e.istouched = true;
-		  else e.istouched = false;
 		}
-	  }//自機の弾と敵の当たり判定
+		e.istouched = flag;
+	  }
+	}//敵と自機の弾の当たり判定
 
-	  {
-		Rect(FIELD_X, 0, WINDOW_X, 80).draw(Palette::White);
-		Rect(FIELD_X, 0, ((WINDOW_X - FIELD_X) * player.hp / MY_HP), 80).draw(Palette::Red);
-	  }//HP欄を作る
+	{
+	  Rect(FIELD_X, 0, WINDOW_X, 80).draw(Palette::White);
+	  Rect(FIELD_X, 0, ((WINDOW_X - FIELD_X) * player.hp / MY_HP), 80).draw(Palette::Red);
+	}//HP欄を作る
 
-
-	  if (player.hp <= 0)break;//HPが0になったら終了
-
-	}//end of if.
-
-	if (0 <= gameType) {
-	  auto back = title(U"戻る");
-	  back.draw(WINDOW_X - back.region().x, WINDOW_Y - back.region().y, Palette::Palevioletred);
+	if (player.hp <= 0) {
+	  int x = 114514;
+	  connection.Send(Jin::getIP(), 3000, x);
+	  ptr = std::make_unique<Introduction>(std::initializer_list<String>{U"HPが0になりました！\n次の人に代わってください"});
 	}
 
-  }//end of main loop.
+  }
+  catch (std::exception & e) {
+	std::cout << e.what() << std::endl;
+  }
+
+}
+
+void Introduction::update(std::unique_ptr<Stage> & ptr) {
+  for (const auto& s : sentences) {
+	const Rect rect = font(s).region();//それぞれの文字列の縦と横の長さを取得
+	int x = (WINDOW_X - rect.w) / 2, y = (WINDOW_Y - rect.h) / 2;//文字列の描画位置を設定
+	for (int i = 0; i < s.size(); i++) {
+	  String tmp = U"";
+	  for (int j = 0; j < i; j++)tmp += s[j];
+	  //描画する文字列の作成
+	  font(tmp).draw(x, y);//描画
+	  System::Update();//システムのアップデートする
+	  std::this_thread::sleep_for(50ms);
+	}
+	while (!PAD_ENTER && System::Update())font(s).draw(x, y);
+  }
+  ptr = std::make_unique<Stage1>();
+}
+
+void Main() {
+
+  Init();
+  std::unique_ptr<Stage> stage_ptr = std::make_unique<Introduction>(std::initializer_list<String>{U"これからルール説明を始めるよ", U"うんち！"});
+
+  while (System::Update()) {
+	stage_ptr->update(stage_ptr);
+  }
 
 }//end of entry point.
